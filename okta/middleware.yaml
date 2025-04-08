@@ -1,0 +1,9 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: okta-auth
+  namespace: secure-app
+spec:
+  forwardAuth:
+    address: "https://<your-okta-domain>/oauth2/default/v1/authorize?client_id=<client-id>&redirect_uri=http://<LB_IP>/oauth2/callback"
+    trustForwardHeader: true

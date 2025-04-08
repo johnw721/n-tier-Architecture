@@ -1,0 +1,20 @@
+# Ansible Playbook Snippet (`security.yml`)
+- name: Disable root login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+    backup: yes
+  notify: restart ssh
+
+- name: Allow only SSH and HTTP
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: [22, 80]
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+    policy: deny
