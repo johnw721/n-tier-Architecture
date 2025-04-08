@@ -561,3 +561,185 @@ flowchart LR
 3. **Kubernetes + Okta** delivers **scalable, secure** app access.  
 
 This architecture mirrors **real-world DevOps pipelines** while staying cost-optimized. Need adjustments for specific use cases? Let me know!
+---
+Here’s a **step-by-step guide** to configure the security controls for each layer in your architecture, with actionable commands and best practices:
+
+---
+
+### **1. Infrastructure Security (Ansible)**
+#### **Control: Harden SSH & Firewall**
+```yaml
+# Ansible Playbook Snippet (`security.yml`)
+- name: Disable root login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+    backup: yes
+  notify: restart ssh
+
+- name: Allow only SSH and HTTP
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: [22, 80]
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+    policy: deny
+```
+**Run with**:  
+```bash
+ansible-playbook -i hosts.ini security.yml
+```
+
+---
+
+### **2. Network Security (Azure NSG)**
+#### **Control: Restrict Traffic**
+```bash
+# Create NSG rules via Azure CLI
+az network nsg rule create \
+  --name AllowSSH \
+  --nsg-name MyNSG \
+  --resource-group ansible-rg \
+  --access Allow \
+  --protocol Tcp \
+  --direction Inbound \
+  --priority 100 \
+  --source-address-prefixes 'Your.IP.Here' \
+  --source-port-ranges '*' \
+  --destination-port-ranges 22
+
+az network nsg rule create \
+  --name AllowHTTP \
+  --nsg-name MyNSG \
+  --resource-group ansible-rg \
+  --access Allow \
+  --protocol Tcp \
+  --direction Inbound \
+  --priority 110 \
+  --source-address-prefixes '*' \
+  --destination-port-ranges 80
+```
+
+---
+
+### **3. Identity Security (Okta)**
+#### **Control: OIDC SSO with Traefik**
+1. **Okta Setup**:
+   - In Okta Developer Console:
+     - Create OIDC app (Web → `http://<LB_IP>/oauth2/callback`).
+     - Note `Client ID` and `Secret`.
+
+2. **Traefik Middleware** (`middleware.yaml`):
+```yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: okta-auth
+  namespace: secure-app
+spec:
+  forwardAuth:
+    address: "https://<your-okta-domain>/oauth2/default/v1/authorize?client_id=<client-id>&redirect_uri=http://<LB_IP>/oauth2/callback"
+    trustForwardHeader: true
+```
+
+3. **Apply to Ingress**:
+```bash
+kubectl apply -f middleware.yaml
+```
+
+---
+
+### **4. Compliance (OpenSCAP)**
+#### **Control: Automated STIG Scans**
+```bash
+# Install OpenSCAP and run scan
+ansible app_servers -i hosts.ini -m ansible.builtin.shell -a "sudo apt install -y libopenscap8 && sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --results scan.xml /usr/share/xml/scap/ssg/content/ssg-ubuntu2204-ds.xml"
+
+# Fetch results
+ansible app_servers -i hosts.ini -m fetch -a "src=scan.xml dest=scap-reports/ flat=yes"
+```
+
+---
+
+### **5. Kubernetes Security (CKA Best Practices)**
+#### **Control: Pod Security Policies**
+```yaml
+# psp-restrictive.yaml
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restricted
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities: ["NET_RAW"]
+  volumes: ["configMap", "emptyDir"]
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser: { rule: "MustRunAsNonRoot" }
+  seLinux: { rule: "RunAsAny" }
+  supplementalGroups: { rule: "MustRunAs", ranges: [{min: 1, max: 65535}] }
+  fsGroup: { rule: "MustRunAs", ranges: [{min: 1, max: 65535}] }
+```
+**Apply with**:  
+```bash
+kubectl apply -f psp-restrictive.yaml
+```
+
+---
+
+### **6. Container Security (Docker)**
+#### **Control: Non-Root Containers**
+```yaml
+# Dockerfile snippet
+FROM nginx:alpine
+RUN chown -R nginx:nginx /usr/share/nginx/html
+USER nginx
+```
+
+---
+
+### **7. Azure Resource Security (Terraform)**
+#### **Control: Enable AKS RBAC**
+```hcl
+# terraform/main.tf
+resource "azurerm_kubernetes_cluster" "aks" {
+  role_based_access_control_enabled = true
+  azure_active_directory_role_based_access_control {
+    managed = true
+    admin_group_object_ids = ["<YOUR_AAD_GROUP_ID>"]
+  }
+}
+```
+
+---
+
+### **🔒 Layered Security Summary**
+| **Layer**          | **Control**                          | **Tool/Command**                              |
+|---------------------|--------------------------------------|-----------------------------------------------|
+| **Infrastructure**  | SSH hardening, UFW                   | Ansible `ufw` module                          |
+| **Network**         | NSG rules                            | Azure CLI `az network nsg rule create`        |
+| **Identity**        | OIDC SSO                             | Okta + Traefik `forwardAuth`                  |
+| **Compliance**      | STIG scans                           | OpenSCAP `oscap xccdf eval`                   |
+| **Kubernetes**      | Pod Security Policies                | K8s `PodSecurityPolicy`                       |
+| **Container**       | Non-root user                        | Dockerfile `USER` directive                   |
+| **Cloud**           | AKS RBAC                             | Terraform `azurerm_kubernetes_cluster` RBAC   |
+
+---
+
+### **🚀 Pro Tips**
+1. **Automate Checks**:  
+   ```bash
+   # Cron job for weekly OpenSCAP scans
+   echo "0 3 * * 0 root /usr/bin/oscap xccdf eval --profile stig --results /var/log/scan-$(date +\%Y\%m\%d).xml /usr/share/xml/scap/ssg/content/ssg-ubuntu2204-ds.xml" | sudo tee /etc/cron.d/openscap
+   ```
+2. **Continuous Monitoring**:  
+   - Use **Azure Sentinel** or **Falco** for runtime threats in AKS.
+
+Need **custom scripts** for your exact environment? Let me know! 🔧
