@@ -1,0 +1,23 @@
+---
+- hosts: app_vm
+  become: true
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+    - name: Harden SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        line: "PasswordAuthentication no"
+      notify: restart ssh
+    - name: Run Nginx container
+      docker_container:
+        name: nginx
+        image: nginx
+        ports: "80:80"
+  handlers:
+    - name: restart ssh
+      service:
+        name: sshd
+        state: restarted
